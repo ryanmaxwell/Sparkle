@@ -4,7 +4,11 @@
 
 "%@ %@ is currently the newest version available." = "%1$@ %2$@ 已是目前最新的版本。";
 
+/* Description text for SUUpdateAlert when the update is downloadable. */
 "%@ %@ is now available--you have %@. Would you like to download it now?" = "%1$@ %2$@ 現在已可取得，您的版本則是 %3$@。您要現在下載嗎？";
+
+/* Description text for SUUpdateAlert when the update informational with no download. */
+"%@ %@ is now available--you have %@. Would you like to learn more about this update on the web?" = "%1$@ %2$@ is now available--you have %3$@. Would you like to learn more about this update on the web?";
 
 "%@ downloaded" = "%@ 已下載";
 
@@ -14,7 +18,7 @@
 
 "A new version of %@ is ready to install!" = "新版本的 %@ 已準備安裝！";
 
-"An error occurred in retrieving update information. Please try again later." = "擷取更新資訊時發生錯誤。請稍後再試一次。請稍後再試一次。";
+"An error occurred in retrieving update information. Please try again later." = "擷取更新資訊時發生錯誤。請稍後再試一次。";
 
 "An error occurred while downloading the update. Please try again later." = "下載更新項目時發生錯誤。請稍後再試一次。";
 

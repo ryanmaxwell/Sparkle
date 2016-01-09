@@ -10,21 +10,16 @@
 #ifndef SUCONSTANTS_H
 #define SUCONSTANTS_H
 
+#import <Foundation/Foundation.h>
+
 // -----------------------------------------------------------------------------
-//	Preprocessor flags:
+//	Misc:
 // -----------------------------------------------------------------------------
 
-// Sparkle usually doesn't allow downgrades as they're usually accidental, but
-//	if your app has a downgrade function or URL handler, turn this on:
-#define PERMIT_AUTOMATED_DOWNGRADES 0
+extern const NSTimeInterval SUMinimumUpdateCheckInterval;
+extern const NSTimeInterval SUDefaultUpdateCheckInterval;
 
-// If your app file on disk is named "MyApp 1.1b4", Sparkle usually updates it
-//	in place, giving you an app named 1.1b4 that is actually 1.2. Turn the
-//	following on to always reset the name back to "MyApp":
-#define NORMALIZE_INSTALLED_APP_NAME 0
-
-
-#define TRY_TO_APPEND_VERSION_NUMBER 1
+extern NSString *const SUBundleIdentifier;
 
 // -----------------------------------------------------------------------------
 //	Notifications:
@@ -56,32 +51,33 @@ extern NSString *const SUPromptUserOnFirstLaunchKey;
 extern NSString *const SUKeepDownloadOnFailedInstallKey;
 extern NSString *const SUDefaultsDomainKey;
 extern NSString *const SUFixedHTMLDisplaySizeKey __attribute__((deprecated("This key is obsolete and has no effect.")));
+extern NSString *const SUAppendVersionNumberKey __attribute__((deprecated("This key is obsolete. See SPARKLE_APPEND_VERSION_NUMBER.")));
+extern NSString *const SUEnableAutomatedDowngradesKey __attribute__((deprecated("This key is obsolete. See SPARKLE_AUTOMATED_DOWNGRADES.")));
+extern NSString *const SUNormalizeInstalledApplicationNameKey __attribute__((deprecated("This key is obsolete. SPARKLE_NORMALIZE_INSTALLED_APPLICATION_NAME.")));
+extern NSString *const SURelaunchToolNameKey __attribute__((deprecated("This key is obsolete. SPARKLE_RELAUNCH_TOOL_NAME.")));
 
 // -----------------------------------------------------------------------------
-//	Errors:
+//	Appcast keys::
 // -----------------------------------------------------------------------------
 
-extern NSString *const SUSparkleErrorDomain;
-// Appcast phase errors.
-extern OSStatus SUAppcastParseError;
-extern OSStatus SUNoUpdateError;
-extern OSStatus SUAppcastError;
-extern OSStatus SURunningFromDiskImageError;
+extern NSString *const SUAppcastAttributeDeltaFrom;
+extern NSString *const SUAppcastAttributeDSASignature;
+extern NSString *const SUAppcastAttributeShortVersionString;
+extern NSString *const SUAppcastAttributeVersion;
 
-// Downlaod phase errors.
-extern OSStatus SUTemporaryDirectoryError;
+extern NSString *const SUAppcastElementCriticalUpdate;
+extern NSString *const SUAppcastElementDeltas;
+extern NSString *const SUAppcastElementMinimumSystemVersion;
+extern NSString *const SUAppcastElementMaximumSystemVersion;
+extern NSString *const SUAppcastElementReleaseNotesLink;
+extern NSString *const SUAppcastElementTags;
 
-// Extraction phase errors.
-extern OSStatus SUUnarchivingError;
-extern OSStatus SUSignatureError;
+extern NSString *const SURSSAttributeURL;
 
-// Installation phase errors.
-extern OSStatus SUFileCopyFailure;
-extern OSStatus SUAuthenticationFailure;
-extern OSStatus SUMissingUpdateError;
-extern OSStatus SUMissingInstallerToolError;
-extern OSStatus SURelaunchError;
-extern OSStatus SUInstallationError;
-extern OSStatus SUDowngradeError;
+extern NSString *const SURSSElementDescription;
+extern NSString *const SURSSElementEnclosure;
+extern NSString *const SURSSElementLink;
+extern NSString *const SURSSElementPubDate;
+extern NSString *const SURSSElementTitle;
 
 #endif

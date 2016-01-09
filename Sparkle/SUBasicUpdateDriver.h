@@ -15,9 +15,9 @@
 #import "SUAppcast.h"
 
 @class SUAppcastItem, SUHost;
-@interface SUBasicUpdateDriver : SUUpdateDriver <NSURLDownloadDelegate, SUUnarchiverDelegate, SUAppcastDelegate>
+@interface SUBasicUpdateDriver : SUUpdateDriver <NSURLDownloadDelegate, SUUnarchiverDelegate>
 
-@property (weak, readonly) SUAppcastItem *updateItem;
+@property (strong, readonly) SUAppcastItem *updateItem;
 @property (strong, readonly) NSURLDownload *download;
 @property (copy, readonly) NSString *downloadPath;
 
@@ -27,6 +27,7 @@
 - (BOOL)hostSupportsItem:(SUAppcastItem *)ui;
 - (BOOL)itemContainsSkippedVersion:(SUAppcastItem *)ui;
 - (BOOL)itemContainsValidUpdate:(SUAppcastItem *)ui;
+- (void)appcastDidFinishLoading:(SUAppcast *)ac;
 - (void)didFindValidUpdate;
 - (void)didNotFindUpdate;
 
@@ -48,6 +49,7 @@
 
 - (void)abortUpdate;
 - (void)abortUpdateWithError:(NSError *)error;
+- (void)terminateApp;
 
 @end
 

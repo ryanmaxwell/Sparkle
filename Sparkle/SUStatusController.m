@@ -31,7 +31,7 @@
 
 - (instancetype)initWithHost:(SUHost *)aHost
 {
-    self = [super initWithHost:aHost windowNibName:@"SUStatus"];
+    self = [super initWithWindowNibName:@"SUStatus"];
 	if (self)
 	{
         self.host = aHost;
@@ -42,7 +42,7 @@
 
 - (NSString *)description { return [NSString stringWithFormat:@"%@ <%@, %@>", [self class], [self.host bundlePath], [self.host installationPath]]; }
 
-- (void)awakeFromNib
+- (void)windowDidLoad
 {
     if ([self.host isBackgroundApplication]) {
         [[self window] setLevel:NSFloatingWindowLevel];

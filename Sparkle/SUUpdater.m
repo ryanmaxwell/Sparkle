@@ -29,6 +29,8 @@ NSString *const SUUpdaterAppcastNotificationKey = @"SUUpdaterAppCastNotification
 
 @interface SUUpdater () <SUUpdatePermissionPromptDelegate>
 @property (strong) NSTimer *checkTimer;
+@property (strong) NSBundle *sparkleBundle;
+
 - (instancetype)initForBundle:(NSBundle *)bundle;
 - (void)startUpdateCycle;
 - (void)checkForUpdatesWithDriver:(SUUpdateDriver *)updateDriver;
@@ -51,11 +53,10 @@ NSString *const SUUpdaterAppcastNotificationKey = @"SUUpdaterAppCastNotification
 @synthesize delegate;
 @synthesize checkTimer;
 @synthesize userAgentString = customUserAgentString;
-
+@synthesize httpHeaders;
 @synthesize driver;
 @synthesize host;
-
-#pragma mark Initialization
+@synthesize sparkleBundle;
 
 static NSMutableDictionary *sharedUpdaters = nil;
 static NSString *const SUUpdaterDefaultsObservationContext = @"SUUpdaterDefaultsObservationContext";
@@ -82,6 +83,13 @@ static NSString *const SUUpdaterDefaultsObservationContext = @"SUUpdaterDefaults
     self = [super init];
     if (bundle == nil) bundle = [NSBundle mainBundle];
 
+    // Use explicit class to use the correct bundle even when subclassed
+    self.sparkleBundle = [NSBundle bundleForClass:[SUUpdater class]];
+    if (!self.sparkleBundle) {
+        SULog(@"Error: SUUpdater can't find Sparkle.framework it belongs to");
+        return nil;
+    }
+
     // Register as observer straight away to avoid exceptions on -dealloc when -unregisterAsObserver is called:
     if (self) {
         [self registerAsObserver];
@@ -101,23 +109,50 @@ static NSString *const SUUpdaterDefaultsObservationContext = @"SUUpdaterDefaults
         host = [[SUHost alloc] initWithBundle:bundle];
 
         // Saving-the-developer-from-a-stupid-mistake-check:
-        BOOL hasPublicDSAKey = [host publicDSAKey] != nil;
-        BOOL isMainBundle = [bundle isEqualTo:[NSBundle mainBundle]];
-        BOOL hostIsCodeSigned = [SUCodeSigningVerifier hostApplicationIsCodeSigned];
-        if (!isMainBundle && !hasPublicDSAKey) {
-            [self notifyWillShowModalAlert];
-            NSRunAlertPanel(@"Insecure update error!", @"For security reasons, you need to sign your updates with a DSA key. See Sparkle's documentation for more information.", @"OK", nil, nil);
-            [self notifyDidShowModalAlert];
-        } else if (isMainBundle && !(hasPublicDSAKey || hostIsCodeSigned)) {
-            [self notifyWillShowModalAlert];
-            NSRunAlertPanel(@"Insecure update error!", @"For security reasons, you need to code sign your application or sign your updates with a DSA key. See Sparkle's documentation for more information.", @"OK", nil, nil);
-            [self notifyDidShowModalAlert];
-        }
+        // The check is async to give time to set a delegate, so that potentially-overriden feedURL works
+        [self performSelector:@selector(checkIfConfiguredProperly) withObject:nil afterDelay:0];
 
         // This runs the permission prompt if needed, but never before the app has finished launching because the runloop won't run before that
         [self performSelector:@selector(startUpdateCycle) withObject:nil afterDelay:0];
     }
     return self;
+}
+
+-(void)showModalAlertText:(NSString *)text informativeText:(NSString *)informativeText {
+    [self notifyWillShowModalAlert];
+    NSAlert *alert = [[NSAlert alloc] init];
+    alert.messageText = text;
+    alert.informativeText = informativeText;
+    [alert runModal];
+    [self notifyDidShowModalAlert];
+}
+
+-(void)checkIfConfiguredProperly {
+    BOOL hasPublicDSAKey = [self.host publicDSAKey] != nil;
+    BOOL isMainBundle = [self.host.bundle isEqualTo:[NSBundle mainBundle]];
+    BOOL hostIsCodeSigned = [SUCodeSigningVerifier hostApplicationIsCodeSigned];
+    NSURL *feedURL = [self feedURL];
+    BOOL servingOverHttps = [[[feedURL scheme] lowercaseString] isEqualToString:@"https"];
+    if (!isMainBundle && !hasPublicDSAKey) {
+        [self showModalAlertText:@"Insecure update error!"
+                 informativeText:@"For security reasons, you need to sign your updates with a DSA key. See Sparkle's documentation for more information."];
+    } else if (isMainBundle && !(hasPublicDSAKey || hostIsCodeSigned)) {
+        [self showModalAlertText:@"Insecure update error!"
+                 informativeText:@"For security reasons, you need to code sign your application or sign your updates with a DSA key. See Sparkle's documentation for more information."];
+    } else if (isMainBundle && !hasPublicDSAKey && !servingOverHttps) {
+        SULog(@"WARNING: Serving updates over HTTP without signing them with a DSA key is deprecated and may not be possible in a future release. Please serve your updates over https, or sign them with a DSA key, or do both. See Sparkle's documentation for more information.");
+    }
+
+#if __MAC_OS_X_VERSION_MAX_ALLOWED >= 101100
+    BOOL atsExceptionsExist = nil != [self.host objectForInfoDictionaryKey:@"NSAppTransportSecurity"];
+    if (isMainBundle && !servingOverHttps && !atsExceptionsExist) {
+        [self showModalAlertText:@"Insecure feed URL is blocked in OS X 10.11"
+                 informativeText:[NSString stringWithFormat:@"You must change the feed URL (%@) to use HTTPS or disable App Transport Security.\n\nFor more information:\nhttp://sparkle-project.org/documentation/app-transport-security/", [feedURL absoluteString]]];
+    }
+    if (!isMainBundle && !servingOverHttps) {
+        SULog(@"WARNING: Serving updates over HTTP may be blocked in OS X 10.11. Please change the feed URL (%@) to use HTTPS. For more information:\nhttp://sparkle-project.org/documentation/app-transport-security/", feedURL);
+    }
+#endif
 }
 
 
@@ -147,38 +182,28 @@ static NSString *const SUUpdaterDefaultsObservationContext = @"SUUpdaterDefaults
 - (void)startUpdateCycle
 {
     BOOL shouldPrompt = NO;
+    BOOL hasLaunchedBefore = [self.host boolForUserDefaultsKey:SUHasLaunchedBeforeKey];
 
     // If the user has been asked about automatic checks, don't bother prompting
-	if ([self.host objectForUserDefaultsKey:SUEnableAutomaticChecksKey])
-    {
+    if ([self.host objectForUserDefaultsKey:SUEnableAutomaticChecksKey]) {
         shouldPrompt = NO;
     }
     // Does the delegate want to take care of the logic for when we should ask permission to update?
-    else if ([self.delegate respondsToSelector:@selector(updaterShouldPromptForPermissionToCheckForUpdates:)])
-    {
+    else if ([self.delegate respondsToSelector:@selector(updaterShouldPromptForPermissionToCheckForUpdates:)]) {
         shouldPrompt = [self.delegate updaterShouldPromptForPermissionToCheckForUpdates:self];
     }
     // Has he been asked already? And don't ask if the host has a default value set in its Info.plist.
-    else if ([self.host objectForKey:SUEnableAutomaticChecksKey] == nil)
-    {
-        if ([self.host objectForUserDefaultsKey:SUEnableAutomaticChecksKeyOld]) {
-            [self setAutomaticallyChecksForUpdates:[self.host boolForUserDefaultsKey:SUEnableAutomaticChecksKeyOld]];
-        }
+    else if ([self.host objectForKey:SUEnableAutomaticChecksKey] == nil) {
         // Now, we don't want to ask the user for permission to do a weird thing on the first launch.
         // We wait until the second launch, unless explicitly overridden via SUPromptUserOnFirstLaunchKey.
-        else if (![self.host objectForKey:SUPromptUserOnFirstLaunchKey])
-        {
-            if ([self.host boolForUserDefaultsKey:SUHasLaunchedBeforeKey] == NO)
-                [self.host setBool:YES forUserDefaultsKey:SUHasLaunchedBeforeKey];
-            else
-                shouldPrompt = YES;
-        }
-        else
-            shouldPrompt = YES;
+        shouldPrompt = [self.host objectForKey:SUPromptUserOnFirstLaunchKey] || hasLaunchedBefore;
     }
 
-    if (shouldPrompt)
-    {
+    if (!hasLaunchedBefore) {
+        [self.host setBool:YES forUserDefaultsKey:SUHasLaunchedBeforeKey];
+    }
+
+    if (shouldPrompt) {
         NSArray *profileInfo = [self.host systemProfile];
         // Always say we're sending the system profile here so that the delegate displays the parameters it would send.
         if ([self.delegate respondsToSelector:@selector(feedParametersForUpdater:sendingSystemProfile:)]) {
@@ -186,9 +211,7 @@ static NSString *const SUUpdaterDefaultsObservationContext = @"SUUpdaterDefaults
         }
         [SUUpdatePermissionPrompt promptWithHost:self.host systemProfile:profileInfo delegate:self];
         // We start the update checks and register as observer for changes after the prompt finishes
-	}
-    else
-    {
+    } else {
         // We check if the user's said they want updates, or they haven't said anything, and the default is set to checking.
         [self scheduleNextUpdateCheck];
     }
@@ -231,8 +254,8 @@ static NSString *const SUUpdaterDefaultsObservationContext = @"SUUpdaterDefaults
 
     // Now we want to figure out how long until we check again.
     NSTimeInterval delayUntilCheck, updateCheckInterval = [self updateCheckInterval];
-    if (updateCheckInterval < SU_MIN_CHECK_INTERVAL)
-        updateCheckInterval = SU_MIN_CHECK_INTERVAL;
+    if (updateCheckInterval < SUMinimumUpdateCheckInterval)
+        updateCheckInterval = SUMinimumUpdateCheckInterval;
     if (intervalSinceCheck < updateCheckInterval)
         delayUntilCheck = (updateCheckInterval - intervalSinceCheck); // It hasn't been long enough.
     else
@@ -279,8 +302,6 @@ static NSString *const SUUpdaterDefaultsObservationContext = @"SUUpdaterDefaults
                 BOOL reachable = (flags & kSCNetworkFlagsReachable) == kSCNetworkFlagsReachable;
                 BOOL automatic = (flags & kSCNetworkFlagsConnectionAutomatic) == kSCNetworkFlagsConnectionAutomatic;
                 BOOL local = (flags & kSCNetworkFlagsIsLocalAddress) == kSCNetworkFlagsIsLocalAddress;
-
-                //NSLog(@"reachable = %s, automatic = %s, local = %s", (reachable?"YES":"NO"), (automatic?"YES":"NO"), (local?"YES":"NO"));
 
                 if (!(reachable || automatic || local))
                     isNetworkReachable = NO;
@@ -331,13 +352,21 @@ static NSString *const SUUpdaterDefaultsObservationContext = @"SUUpdaterDefaults
     [self checkForUpdatesWithDriver:[[SUProbingUpdateDriver alloc] initWithUpdater:self]];
 }
 
+- (void)installUpdatesIfAvailable
+{
+    if (self.driver && [self.driver isInterruptible]) {
+        [self.driver abortUpdate];
+    }
+
+    SUUIBasedUpdateDriver *theUpdateDriver = [[SUUserInitiatedUpdateDriver alloc] initWithUpdater:self];
+    theUpdateDriver.automaticallyInstallUpdates = YES;
+    [self checkForUpdatesWithDriver:theUpdateDriver];
+}
+
 - (void)checkForUpdatesWithDriver:(SUUpdateDriver *)d
 {
 	if ([self updateInProgress]) { return; }
 	if (self.checkTimer) { [self.checkTimer invalidate]; self.checkTimer = nil; }		// Timer is non-repeating, may have invalidated itself, so we had to retain it.
-
-    SUClearLog();
-    SULog(@"===== %@ =====", [[NSFileManager defaultManager] displayNameAtPath:[[NSBundle mainBundle] bundlePath]]);
 
     [self willChangeValueForKey:@"lastUpdateCheckDate"];
     [self.host setObject:[NSDate date] forUserDefaultsKey:SULastCheckTimeKey];
@@ -382,7 +411,7 @@ static NSString *const SUUpdaterDefaultsObservationContext = @"SUUpdaterDefaults
     }
     @catch (NSException *)
     {
-        NSLog(@"Sparkle Error: [SUUpdater unregisterAsObserver] called, but the updater wasn't registered as an observer.");
+        SULog(@"Error: [SUUpdater unregisterAsObserver] called, but the updater wasn't registered as an observer.");
     }
 }
 
@@ -413,7 +442,7 @@ static NSString *const SUUpdaterDefaultsObservationContext = @"SUUpdaterDefaults
     // Hack to support backwards compatibility with older Sparkle versions, which supported
     // disabling updates by setting the check interval to 0.
     if (automaticallyCheckForUpdates && (NSInteger)[self updateCheckInterval] == 0) {
-        [self setUpdateCheckInterval:SU_DEFAULT_CHECK_INTERVAL];
+        [self setUpdateCheckInterval:SUDefaultUpdateCheckInterval];
     }
     [[self class] cancelPreviousPerformRequestsWithTarget:self selector:@selector(resetUpdateCycle) object:nil];
     // Provide a small delay in case multiple preferences are being updated simultaneously.
@@ -436,8 +465,8 @@ static NSString *const SUUpdaterDefaultsObservationContext = @"SUUpdaterDefaults
 
 - (BOOL)automaticallyDownloadsUpdates
 {
-    // If the SUAllowsAutomaticUpdatesKey exists and is set to NO, return NO.
-    if ([self.host objectForInfoDictionaryKey:SUAllowsAutomaticUpdatesKey] && [self.host boolForInfoDictionaryKey:SUAllowsAutomaticUpdatesKey] == NO) {
+    // If the host doesn't allow automatic updates, don't ever let them happen
+    if (!self.host.allowsAutomaticUpdates) {
         return NO;
     }
 
@@ -478,7 +507,7 @@ static NSString *const SUUpdaterDefaultsObservationContext = @"SUUpdaterDefaults
         return customUserAgentString;
     }
 
-    NSString *version = [SPARKLE_BUNDLE objectForInfoDictionaryKey:@"CFBundleVersion"];
+    NSString *version = [self.sparkleBundle objectForInfoDictionaryKey:(__bridge NSString *)kCFBundleVersionKey];
     NSString *userAgent = [NSString stringWithFormat:@"%@/%@ Sparkle/%@", [self.host name], [self.host displayVersion], version ? version : @"?"];
     NSData *cleanedAgent = [userAgent dataUsingEncoding:NSASCIIStringEncoding allowLossyConversion:YES];
     return [[NSString alloc] initWithData:cleanedAgent encoding:NSASCIIStringEncoding];
@@ -555,7 +584,7 @@ static NSString *const SUUpdaterDefaultsObservationContext = @"SUUpdaterDefaults
     if (intervalValue)
         return [intervalValue doubleValue];
     else
-        return SU_DEFAULT_CHECK_INTERVAL;
+        return SUDefaultUpdateCheckInterval;
 }
 
 - (void)dealloc
